@@ -1,0 +1,89 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inventory-api
+  namespace: inventory-api
+spec:
+  replicas: 2  # 2+ replicas from day one - teaches you to handle rolling
+               # updates and load distribution instead of retrofitting it later
+  selector:
+    matchLabels:
+      app: inventory-api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0   # never drop below desired replica count during a rollout
+      maxSurge: 1         # allowed to temporarily go 1 pod OVER desired count
+  template:
+    metadata:
+      labels:
+        app: inventory-api
+    spec:
+      containers:
+        - name: inventory-api
+          # CHANGE THIS to wherever your image actually lives - see the
+          # registry note at the top of this phase. For a single-node
+          # cluster with the image built directly on the node, this can
+          # just be the local tag with imagePullPolicy: Never (see below).
+          image: inventory-api:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          env:
+            - name: DATABASE_URL
+              value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres.inventory-api.svc.cluster.local:5432/$(POSTGRES_DB)"
+          envFrom:
+            - configMapRef:
+                name: inventory-api-config
+            - secretRef:
+                name: db-credentials  # provides POSTGRES_USER/PASSWORD/DB used above
+          # --- Liveness: is the process itself alive? ---
+          # This maps directly to the /health endpoint we built - it does
+          # NOT check the DB. If this fails repeatedly, K8s KILLS the pod
+          # and starts a fresh one.
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+
+          # --- Readiness: can this pod serve traffic RIGHT NOW? ---
+          # Maps to /ready, which DOES check the DB connection. If this
+          # fails, K8s just stops routing traffic to this pod via the
+          # Service - no restart, no drama, traffic just goes to the
+          # other replica while this one recovers.
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 3
+
+          # Resource requests/limits are NOT optional in production.
+          # Without them: one misbehaving pod can starve every other pod
+          # on the node (no requests = no scheduling guarantee, no limits
+          # = no ceiling on consumption). This is one of the most common
+          # causes of "random" node instability in real clusters.
+          resources:
+            requests:
+              cpu: "100m"      # 0.1 CPU core guaranteed
+              memory: "128Mi"
+            limits:
+              cpu: "500m"      # hard ceiling - throttled beyond this
+              memory: "256Mi"  # hard ceiling - OOMKilled beyond this
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: inventory-api
+  namespace: inventory-api
+spec:
+  selector:
+    app: inventory-api
+  ports:
+    - port: 80
+      targetPort: 8000
+  type: ClusterIP  # internal only for now; Phase 2.6 adds external access

@@ -1,0 +1,8 @@
+# This file just says "who am I" - Helm needs it to identify the chart.
+# Nothing here changes between dev/prod - it's identity, not config.
+apiVersion: v2
+name: inventory-api
+description: GitOps-managed inventory API (FastAPI + Postgres) for self-hosted Kubernetes
+type: application
+version: 0.1.0        # version of the CHART itself (bump this when you change templates)
+appVersion: "1.0.0"   # version of your APP (bump this when you release new app code)

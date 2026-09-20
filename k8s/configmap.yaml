@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: inventory-api-config
+  namespace: inventory-api
+data:
+  # Anything that's NOT sensitive and might change between environments
+  # (dev/staging/prod) belongs here, not baked into the image.
+  LOG_LEVEL: "INFO"

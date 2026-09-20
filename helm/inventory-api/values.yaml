@@ -1,0 +1,38 @@
+# This is the DEFAULT recipe. Think of this as "medium size cake."
+# values-dev.yaml and values-prod.yaml will only list the things that
+# are DIFFERENT from this file - they don't need to repeat everything.
+
+namespace: inventory-api
+
+image:
+  repository: inventory-api
+  tag: latest
+  pullPolicy: IfNotPresent
+
+replicaCount: 2
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+# Non-secret config
+config:
+  logLevel: INFO
+
+# NOTE: real passwords should NEVER live in a values.yaml file that's
+# committed to Git in plain text. For now (still learning phase) we pass
+# this in at deploy-time from the command line - see the --set command
+# in Step 3.6 below. Phase 7 will replace this entirely with Sealed
+# Secrets so nothing sensitive touches Git even indirectly.
+db:
+  user: appuser
+  password: "changeme"   # overridden via --set at deploy time, never committed for real
+  name: appdb
+  storage: 2Gi
+
+service:
+  nodePort: 30080

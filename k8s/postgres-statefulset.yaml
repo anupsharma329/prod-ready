@@ -1,0 +1,84 @@
+# Why StatefulSet instead of Deployment for the database?
+#
+# A Deployment treats pods as interchangeable/disposable - any pod can be
+# killed and replaced with a fresh one at any time, and by default they
+# don't get stable storage attached automatically.
+#
+# A database needs:
+#   1. STABLE STORAGE that survives pod restarts (StatefulSet + PVC does this
+#      via volumeClaimTemplates - each pod gets its OWN persistent volume
+#      that follows it across restarts/rescheduling)
+#   2. STABLE NETWORK IDENTITY (postgres-0, postgres-1, etc. - not needed
+#      for our single-instance case, but matters the moment you do
+#      replication)
+#
+# For a real production DB you'd typically use a managed service (RDS,
+# which you already use at work) or a dedicated operator (Zalando
+# postgres-operator, CloudNativePG). Running Postgres by hand like this is
+# valuable to understand WHY those tools exist, but I would not run
+# a hand-rolled single-instance Postgres StatefulSet as production truth
+# for a real revenue system - no automated failover, no PITR backups.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: inventory-api
+spec:
+  serviceName: postgres  # must match the headless Service below
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+          envFrom:
+            - secretRef:
+                name: db-credentials
+          volumeMounts:
+            - name: postgres-storage
+              mountPath: /var/lib/postgresql/data
+              subPath: pgdata  # avoids "lost+found" dir conflict issues in the mounted volume root
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "appuser", "-d", "appdb"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-storage
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 2Gi
+        storageClassName: standard
+---
+# Headless Service (clusterIP: None) - required by StatefulSet for stable
+# per-pod DNS: postgres-0.postgres.inventory-api.svc.cluster.local
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: inventory-api
+spec:
+  clusterIP: None
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
