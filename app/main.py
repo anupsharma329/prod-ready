@@ -17,11 +17,10 @@ recover -- a very common production incident caused by bad probe design.
 import logging
 import os
 import sys
-import time
 from contextlib import asynccontextmanager
 
 import asyncpg
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 
 # --- Structured logging setup -------------------------------------------
