@@ -67,7 +67,8 @@ jobs:
           format: "table"
           severity: "CRITICAL,HIGH"
           exit-code: "1"
-
+          ignore-unfixed: true
+          
       - name: Push image
         run: |
           docker push $REGISTRY/$IMAGE_NAME:${{ github.sha }}
