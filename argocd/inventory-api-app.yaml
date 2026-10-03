@@ -1,0 +1,29 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: inventory-api
+  namespace: argocd
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/anupsharma329/prod-ready.git
+    targetRevision: main
+    path: helm/inventory-api
+    helm:
+      valueFiles:
+        - values-dev.yaml
+      parameters:
+        - name: db.password
+          value: Tekn2025secure
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: inventory-api
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
