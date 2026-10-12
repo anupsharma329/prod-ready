@@ -4,3 +4,4 @@ __pycache__/
 app/.venv/
 .DS_Store
 .vscode/
+monitoring/grafana-values.yaml
