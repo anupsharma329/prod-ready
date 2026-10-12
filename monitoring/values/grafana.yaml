@@ -9,7 +9,7 @@ resources:
     cpu: 50m
     memory: 100Mi
   limits:
-    memory: 250Mi
+    memory: 400Mi
 datasources:
   datasources.yaml:
     apiVersion: 1
