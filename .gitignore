@@ -5,3 +5,4 @@ app/.venv/
 .DS_Store
 .vscode/
 monitoring/grafana-values.yaml
+hello-*.txt
