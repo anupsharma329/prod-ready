@@ -14,6 +14,7 @@ restart your app in a crash loop instead of just waiting for the DB to
 recover -- a very common production incident caused by bad probe design.
 """
 
+import asyncio
 import logging
 import os
 import sys
@@ -36,44 +37,81 @@ log = logging.getLogger("app")
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://appuser:apppass@localhost:5432/appdb")
 
+# How long to wait between connection attempts. Starts small (fast recovery
+# when the DB is only a few seconds late) and doubles up to a ceiling (so we
+# don't hammer a database that is genuinely down).
+INITIAL_RETRY_DELAY = 1
+MAX_RETRY_DELAY = 30
+
+CREATE_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS items (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT now()
+)
+"""
+
 # --- DB connection pool ---------------------------------------------------
-# A pool (not a single connection) is created once at startup and reused.
+# A pool (not a single connection) is created once and reused.
 # Opening a new DB connection per-request is a classic scaling mistake.
+# It stays None until the database has actually been reached, which is
+# exactly what /ready checks.
 db_pool: asyncpg.Pool | None = None
+
+
+async def connect_with_retry():
+    """
+    Keep trying to reach the database until it works, then store the pool.
+
+    This replaces the old "try once at startup and give up" behaviour. In
+    Kubernetes the app and the database often start at the same moment, so
+    the database being a few seconds late is normal, not an error.
+    """
+    global db_pool
+    delay = INITIAL_RETRY_DELAY
+    while True:
+        pool = None
+        try:
+            pool = await asyncpg.create_pool(
+                DATABASE_URL,
+                min_size=1,
+                max_size=5,
+                timeout=5,  # fail fast instead of hanging forever
+            )
+            async with pool.acquire() as conn:
+                await conn.execute(CREATE_TABLE_SQL)
+            db_pool = pool
+            log.info("Database ready.")
+            return
+        except asyncio.CancelledError:
+            # The app is shutting down; stop retrying and don't swallow this.
+            if pool:
+                await pool.close()
+            raise
+        except Exception as e:
+            if pool:
+                await pool.close()  # don't leak a half-set-up pool
+            log.error(f"DB connection failed, retrying in {delay}s: {e}")
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, MAX_RETRY_DELAY)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global db_pool
-    log.info("Starting up, connecting to database...")
-    try:
-        db_pool = await asyncpg.create_pool(
-            DATABASE_URL,
-            min_size=1,
-            max_size=5,
-            timeout=5,  # fail fast instead of hanging forever
-        )
-        async with db_pool.acquire() as conn:
-            await conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS items (
-                    id SERIAL PRIMARY KEY,
-                    name TEXT NOT NULL,
-                    created_at TIMESTAMPTZ DEFAULT now()
-                )
-                """
-            )
-        log.info("Database ready.")
-    except Exception as e:
-        # We deliberately do NOT crash here. The app should still start so
-        # that /health passes (process is alive) even if the DB is briefly
-        # unreachable. /ready will correctly report "not ready" instead.
-        log.error(f"DB connection failed at startup: {e}")
-        db_pool = None
+    # Start connecting in the background and let the app come up immediately,
+    # so /health passes (process is alive) while /ready correctly reports
+    # "not ready" until the database answers.
+    log.info("Starting up, connecting to database in the background...")
+    connect_task = asyncio.create_task(connect_with_retry())
 
     yield  # app runs here
 
-    log.info("Shutting down, closing DB pool...")
+    log.info("Shutting down...")
+    connect_task.cancel()
+    try:
+        await connect_task
+    except asyncio.CancelledError:
+        pass
     if db_pool:
         await db_pool.close()
 
